@@ -104,121 +104,137 @@ class RowsEvent(BinLogEvent):
 
         nullBitmapIndex = 0
         nb_columns = len(self.columns)
+
+        pk_col = None
+        pk_col_val = None
+
         for i in range(0, nb_columns):
-            column = self.columns[i]
-            name = self.table_map[self.table_id].columns[i].name
-            unsigned = self.table_map[self.table_id].columns[i].unsigned
-            zerofill = self.table_map[self.table_id].columns[i].zerofill
-            fixed_binary_length = self.table_map[self.table_id].columns[i].fixed_binary_length
+            try:
+                column = self.columns[i]
+                name = self.table_map[self.table_id].columns[i].name
+                unsigned = self.table_map[self.table_id].columns[i].unsigned
+                zerofill = self.table_map[self.table_id].columns[i].zerofill
+                fixed_binary_length = self.table_map[self.table_id].columns[i].fixed_binary_length
 
-            if BitGet(cols_bitmap, i) == 0:
-                values[name] = None
-                continue
+                if BitGet(cols_bitmap, i) == 0:
+                    values[name] = None
+                    continue
 
-            if self._is_null(null_bitmap, nullBitmapIndex):
-                values[name] = None
-            elif column.type == FIELD_TYPE.TINY:
-                if unsigned:
-                    values[name] = struct.unpack("<B", self.packet.read(1))[0]
-                    if zerofill:
-                        values[name] = format(values[name], '03d')
+                if self._is_null(null_bitmap, nullBitmapIndex):
+                    values[name] = None
+                elif column.type == FIELD_TYPE.TINY:
+                    if unsigned:
+                        values[name] = struct.unpack("<B", self.packet.read(1))[0]
+                        if zerofill:
+                            values[name] = format(values[name], '03d')
+                    else:
+                        values[name] = struct.unpack("<b", self.packet.read(1))[0]
+                elif column.type == FIELD_TYPE.SHORT:
+                    if unsigned:
+                        values[name] = struct.unpack("<H", self.packet.read(2))[0]
+                        if zerofill:
+                            values[name] = format(values[name], '05d')
+                    else:
+                        values[name] = struct.unpack("<h", self.packet.read(2))[0]
+                elif column.type == FIELD_TYPE.LONG:
+                    if unsigned:
+                        values[name] = struct.unpack("<I", self.packet.read(4))[0]
+                        if zerofill:
+                            values[name] = format(values[name], '010d')
+                    else:
+                        values[name] = struct.unpack("<i", self.packet.read(4))[0]
+                elif column.type == FIELD_TYPE.INT24:
+                    if unsigned:
+                        values[name] = self.packet.read_uint24()
+                        if zerofill:
+                            values[name] = format(values[name], '08d')
+                    else:
+                        values[name] = self.packet.read_int24()
+                elif column.type == FIELD_TYPE.FLOAT:
+                    values[name] = struct.unpack("<f", self.packet.read(4))[0]
+                elif column.type == FIELD_TYPE.DOUBLE:
+                    values[name] = struct.unpack("<d", self.packet.read(8))[0]
+                elif column.type == FIELD_TYPE.VARCHAR or \
+                        column.type == FIELD_TYPE.STRING:
+                    if column.max_length > 255:
+                        values[name] = self.__read_string(2, column)
+                    else:
+                        values[name] = self.__read_string(1, column)
+
+                    if fixed_binary_length and len(values[name]) < fixed_binary_length:
+                        # Fixed-length binary fields are stored in the binlog
+                        # without trailing zeros and must be padded with zeros up
+                        # to the specified length at read time.
+                        nr_pad = fixed_binary_length - len(values[name])
+                        values[name] += b'\x00' * nr_pad
+
+                elif column.type == FIELD_TYPE.NEWDECIMAL:
+                    values[name] = self.__read_new_decimal(column)
+                elif column.type == FIELD_TYPE.BLOB:
+                    values[name] = self.__read_string(column.length_size, column)
+                elif column.type == FIELD_TYPE.DATETIME:
+                    values[name] = self.__read_datetime()
+                elif column.type == FIELD_TYPE.TIME:
+                    values[name] = self.__read_time()
+                elif column.type == FIELD_TYPE.DATE:
+                    values[name] = self.__read_date()
+                elif column.type == FIELD_TYPE.TIMESTAMP:
+                    values[name] = datetime.datetime.fromtimestamp(
+                        self.packet.read_uint32())
+
+                # For new date format:
+                elif column.type == FIELD_TYPE.DATETIME2:
+                    values[name] = self.__read_datetime2(column)
+                elif column.type == FIELD_TYPE.TIME2:
+                    values[name] = self.__read_time2(column)
+                elif column.type == FIELD_TYPE.TIMESTAMP2:
+                    values[name] = self.__add_fsp_to_time(
+                        datetime.datetime.fromtimestamp(
+                            self.packet.read_int_be_by_size(4)), column)
+                elif column.type == FIELD_TYPE.LONGLONG:
+                    if unsigned:
+                        values[name] = self.packet.read_uint64()
+                        if zerofill:
+                            values[name] = format(values[name], '020d')
+                    else:
+                        values[name] = self.packet.read_int64()
+                elif column.type == FIELD_TYPE.YEAR:
+                    values[name] = self.packet.read_uint8() + 1900
+                elif column.type == FIELD_TYPE.ENUM:
+                    values[name] = column.enum_values[
+                        self.packet.read_uint_by_size(column.size)]
+                elif column.type == FIELD_TYPE.SET:
+                    # We read set columns as a bitmap telling us which options
+                    # are enabled
+                    bit_mask = self.packet.read_uint_by_size(column.size)
+                    values[name] = set(
+                        val for idx, val in enumerate(column.set_values)
+                        if bit_mask & 2 ** idx
+                    ) or None
+
+                elif column.type == FIELD_TYPE.BIT:
+                    values[name] = self.__read_bit(column)
+                elif column.type == FIELD_TYPE.GEOMETRY:
+                    values[name] = self.packet.read_length_coded_pascal_string(
+                        column.length_size)
+                elif column.type == FIELD_TYPE.JSON:
+                    values[name] = self.packet.read_binary_json(column.length_size)
                 else:
-                    values[name] = struct.unpack("<b", self.packet.read(1))[0]
-            elif column.type == FIELD_TYPE.SHORT:
-                if unsigned:
-                    values[name] = struct.unpack("<H", self.packet.read(2))[0]
-                    if zerofill:
-                        values[name] = format(values[name], '05d')
-                else:
-                    values[name] = struct.unpack("<h", self.packet.read(2))[0]
-            elif column.type == FIELD_TYPE.LONG:
-                if unsigned:
-                    values[name] = struct.unpack("<I", self.packet.read(4))[0]
-                    if zerofill:
-                        values[name] = format(values[name], '010d')
-                else:
-                    values[name] = struct.unpack("<i", self.packet.read(4))[0]
-            elif column.type == FIELD_TYPE.INT24:
-                if unsigned:
-                    values[name] = self.packet.read_uint24()
-                    if zerofill:
-                        values[name] = format(values[name], '08d')
-                else:
-                    values[name] = self.packet.read_int24()
-            elif column.type == FIELD_TYPE.FLOAT:
-                values[name] = struct.unpack("<f", self.packet.read(4))[0]
-            elif column.type == FIELD_TYPE.DOUBLE:
-                values[name] = struct.unpack("<d", self.packet.read(8))[0]
-            elif column.type == FIELD_TYPE.VARCHAR or \
-                    column.type == FIELD_TYPE.STRING:
-                if column.max_length > 255:
-                    values[name] = self.__read_string(2, column)
-                else:
-                    values[name] = self.__read_string(1, column)
+                    raise NotImplementedError("Unknown MySQL column type: %d" %
+                                              (column.type))
 
-                if fixed_binary_length and len(values[name]) < fixed_binary_length:
-                    # Fixed-length binary fields are stored in the binlog
-                    # without trailing zeros and must be padded with zeros up
-                    # to the specified length at read time.
-                    nr_pad = fixed_binary_length - len(values[name])
-                    values[name] += b'\x00' * nr_pad
+                nullBitmapIndex += 1
 
-            elif column.type == FIELD_TYPE.NEWDECIMAL:
-                values[name] = self.__read_new_decimal(column)
-            elif column.type == FIELD_TYPE.BLOB:
-                values[name] = self.__read_string(column.length_size, column)
-            elif column.type == FIELD_TYPE.DATETIME:
-                values[name] = self.__read_datetime()
-            elif column.type == FIELD_TYPE.TIME:
-                values[name] = self.__read_time()
-            elif column.type == FIELD_TYPE.DATE:
-                values[name] = self.__read_date()
-            elif column.type == FIELD_TYPE.TIMESTAMP:
-                values[name] = datetime.datetime.fromtimestamp(
-                    self.packet.read_uint32())
+                if column.is_primary:
+                    pk_col = column
+                    pk_col_val = values[name]
 
-            # For new date format:
-            elif column.type == FIELD_TYPE.DATETIME2:
-                values[name] = self.__read_datetime2(column)
-            elif column.type == FIELD_TYPE.TIME2:
-                values[name] = self.__read_time2(column)
-            elif column.type == FIELD_TYPE.TIMESTAMP2:
-                values[name] = self.__add_fsp_to_time(
-                    datetime.datetime.fromtimestamp(
-                        self.packet.read_int_be_by_size(4)), column)
-            elif column.type == FIELD_TYPE.LONGLONG:
-                if unsigned:
-                    values[name] = self.packet.read_uint64()
-                    if zerofill:
-                        values[name] = format(values[name], '020d')
-                else:
-                    values[name] = self.packet.read_int64()
-            elif column.type == FIELD_TYPE.YEAR:
-                values[name] = self.packet.read_uint8() + 1900
-            elif column.type == FIELD_TYPE.ENUM:
-                values[name] = column.enum_values[
-                    self.packet.read_uint_by_size(column.size)]
-            elif column.type == FIELD_TYPE.SET:
-                # We read set columns as a bitmap telling us which options
-                # are enabled
-                bit_mask = self.packet.read_uint_by_size(column.size)
-                values[name] = set(
-                    val for idx, val in enumerate(column.set_values)
-                    if bit_mask & 2 ** idx
-                ) or None
-
-            elif column.type == FIELD_TYPE.BIT:
-                values[name] = self.__read_bit(column)
-            elif column.type == FIELD_TYPE.GEOMETRY:
-                values[name] = self.packet.read_length_coded_pascal_string(
-                    column.length_size)
-            elif column.type == FIELD_TYPE.JSON:
-                values[name] = self.packet.read_binary_json(column.length_size)
-            else:
-                raise NotImplementedError("Unknown MySQL column type: %d" %
-                                          (column.type))
-
-            nullBitmapIndex += 1
+            except ColumnDecodeError as exception:
+                exception.pk_col = pk_col
+                exception.pk_col_val = pk_col_val
+                raise exception
+            except Exception as exception:
+                raise exception
 
         return values
 

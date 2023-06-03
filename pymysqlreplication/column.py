@@ -100,12 +100,18 @@ class Column(object):
 
 
 class ColumnDecodeError(UnicodeDecodeError):
-    def __init__(self, base: UnicodeDecodeError, column: Column, encoding: str, value: str) -> None:
+    def __init__(self, base: UnicodeDecodeError, column: Column, encoding: str, value: str, **extra_params) -> None:
         super().__init__(base.encoding, base.object, base.start, base.end, base.reason)
         self.column = column
         self.encoding = encoding
         self.value = value
+        self.pk_col = extra_params.get('pk_column')
+        self.pk_col_val = extra_params.get('pk_column_val')
 
     def __str__(self):
-        return f"f'Value {self.value} for column `{self.column.name}` " \
-               f"cannot be decoded by `{self.encoding}`' {super().__str__()}"
+        str_rep = f"f'Value `{self.value}` for column `{self.column.name}` " \
+                  f"cannot be decoded by `{self.encoding}` "
+        if self.pk_col and self.pk_col_val:
+            str_rep += f"primary key `{self.pk_col.name}` of record is {self.pk_col_val}`"
+        str_rep += f". Original exception is: {super().__str__()}"
+        return str_rep
