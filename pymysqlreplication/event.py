@@ -15,7 +15,8 @@ class BinLogEvent(object):
                  ignored_schemas=None,
                  freeze_schema=False,
                  fail_on_table_metadata_unavailable=False,
-                 ignore_decode_errors=False):
+                 ignore_decode_errors=False,
+                 return_bstr_on_decode_errors=None):
         self.packet = from_packet
         self.table_map = table_map
         self.event_type = self.packet.event_type
@@ -24,6 +25,7 @@ class BinLogEvent(object):
         self._ctl_connection = ctl_connection
         self._fail_on_table_metadata_unavailable = fail_on_table_metadata_unavailable
         self._ignore_decode_errors = ignore_decode_errors
+        self._return_bstr_on_decode_errors = return_bstr_on_decode_errors
         # The event have been fully processed, if processed is false
         # the event will be skipped
         self._processed = True

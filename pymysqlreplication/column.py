@@ -97,3 +97,15 @@ class Column(object):
     @property
     def data(self):
         return dict((k, v) for (k, v) in self.__dict__.items() if not k.startswith('_'))
+
+
+class ColumnDecodeError(UnicodeDecodeError):
+    def __init__(self, base: UnicodeDecodeError, column: Column, encoding: str, value: str) -> None:
+        super().__init__(base.encoding, base.object, base.start, base.end, base.reason)
+        self.column = column
+        self.encoding = encoding
+        self.value = value
+
+    def __str__(self):
+        return f"f'Value {self.value} for column `{self.column.name}` " \
+               f"cannot be decoded by `{self.encoding}`' {super().__str__()}"

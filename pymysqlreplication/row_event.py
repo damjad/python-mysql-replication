@@ -11,7 +11,7 @@ from .event import BinLogEvent
 from .exceptions import TableMetadataUnavailableError
 from .constants import FIELD_TYPE
 from .constants import BINLOG
-from .column import Column
+from .column import Column, ColumnDecodeError
 from .table import Table
 from .bitmap import BitCount, BitGet
 
@@ -257,7 +257,16 @@ class RowsEvent(BinLogEvent):
         if column.character_set_name is not None:
             encoding = self.charset_to_encoding(column.character_set_name)
             decode_errors = "ignore" if self._ignore_decode_errors else "strict"
-            string = string.decode(encoding, decode_errors)
+            try:
+                string = string.decode(encoding, decode_errors)
+            except UnicodeDecodeError as err:
+                if self._return_bstr_on_decode_errors:
+                    return string
+                elif self._return_bstr_on_decode_errors is False:
+                    raise ColumnDecodeError(err, column, encoding, string)
+                else:
+                    # backward compatibility
+                    raise err
         return string
 
     def __read_bit(self, column):

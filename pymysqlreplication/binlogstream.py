@@ -141,7 +141,8 @@ class BinLogStreamReader(object):
                  fail_on_table_metadata_unavailable=False,
                  slave_heartbeat=None,
                  is_mariadb=False,
-                 ignore_decode_errors=False):
+                 ignore_decode_errors=False,
+                 return_bstr_on_decode_errors=None):
         """
         Attributes:
             ctl_connection_settings: Connection settings for cluster holding
@@ -180,6 +181,8 @@ class BinLogStreamReader(object):
                     to point to Mariadb specific GTID.
             ignore_decode_errors: If true, any decode errors encountered 
                                   when reading column data will be ignored.
+            return_bstr_on_decode_errors: If true and when ignore_decode_errors is false,
+                                all byte strings with decode errors will be returned as is.
         """
 
         self.__connection_settings = connection_settings
@@ -202,6 +205,7 @@ class BinLogStreamReader(object):
             only_events, ignored_events, filter_non_implemented_events)
         self.__fail_on_table_metadata_unavailable = fail_on_table_metadata_unavailable
         self.__ignore_decode_errors = ignore_decode_errors
+        self.__return_bstr_on_decode_errors = return_bstr_on_decode_errors
 
         # We can't filter on packet level TABLE_MAP and rotate event because
         # we need them for handling other operations
@@ -513,7 +517,8 @@ class BinLogStreamReader(object):
                                                self.__ignored_schemas,
                                                self.__freeze_schema,
                                                self.__fail_on_table_metadata_unavailable,
-                                               self.__ignore_decode_errors)
+                                               self.__ignore_decode_errors,
+                                               self.__return_bstr_on_decode_errors)
 
             if binlog_event.event_type == ROTATE_EVENT:
                 self.log_pos = binlog_event.event.position

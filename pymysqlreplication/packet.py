@@ -97,7 +97,8 @@ class BinLogPacketWrapper(object):
                  ignored_schemas,
                  freeze_schema,
                  fail_on_table_metadata_unavailable,
-                 ignore_decode_errors):
+                 ignore_decode_errors,
+                 return_bstr_on_decode_errors=None):
         # -1 because we ignore the ok byte
         self.read_bytes = 0
         # Used when we want to override a value in the data buffer
@@ -142,7 +143,9 @@ class BinLogPacketWrapper(object):
                                  ignored_schemas=ignored_schemas,
                                  freeze_schema=freeze_schema,
                                  fail_on_table_metadata_unavailable=fail_on_table_metadata_unavailable,
-                                 ignore_decode_errors=ignore_decode_errors)
+                                 ignore_decode_errors=ignore_decode_errors,
+                                 return_bstr_on_decode_errors=return_bstr_on_decode_errors)
+
         if self.event._processed == False:
             self.event = None
 

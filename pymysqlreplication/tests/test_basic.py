@@ -710,7 +710,62 @@ class TestMultipleRowBinLogStreamReader(base.PyMySQLReplicationTestCase):
         event = self.stream.fetchone()
         data = event.rows[0]["values"]["data"]
         self.assertEqual(data, '[{"text":"  Some string"}]')
-    
+
+    def test_return_bstr_on_decode_errors(self):
+        problematic_unicode_string = b'[{"text":"\xed\xa0\xbd \xed\xb1\x8d Some string"}]'
+        self.stream.close()
+        self.execute("CREATE TABLE test (data VARCHAR(50) CHARACTER SET utf8mb4)")
+        self.execute_with_args("INSERT INTO test (data) VALUES (%s)", (problematic_unicode_string))
+        self.execute("COMMIT")
+
+        # Initialize with ignore_decode_errors=False
+        self.stream = BinLogStreamReader(
+            self.database,
+            server_id=1024,
+            only_events=(WriteRowsEvent,),
+            ignore_decode_errors=False,
+            return_bstr_on_decode_errors=False,
+        )
+        event = self.stream.fetchone()
+        event = self.stream.fetchone()
+        with self.assertRaises(ColumnDecodeError) as asrt_exc:
+            event = self.stream.fetchone()
+            data = event.rows[0]["values"]["data"]
+
+        exception = asrt_exc.exception
+        self.assertEqual("data", exception.column.name)
+        self.assertEqual("utf8", exception.encoding)
+        self.assertEqual(problematic_unicode_string, exception.value)
+        self.assertIsInstance(exception, UnicodeError)
+
+        # Initialize with ignore_decode_errors=True and return_bstr_on_decode_errors=True (ignored)
+        self.stream = BinLogStreamReader(
+            self.database,
+            server_id=1024,
+            only_events=(WriteRowsEvent,),
+            ignore_decode_errors=True,
+            return_bstr_on_decode_errors=True
+        )
+        self.stream.fetchone()
+        self.stream.fetchone()
+        event = self.stream.fetchone()
+        data = event.rows[0]["values"]["data"]
+        self.assertEqual(data, '[{"text":"  Some string"}]')
+
+        # Initialize with ignore_decode_errors=False and return_bstr_on_decode_errors=True
+        self.stream = BinLogStreamReader(
+            self.database,
+            server_id=1024,
+            only_events=(WriteRowsEvent,),
+            ignore_decode_errors=False,
+            return_bstr_on_decode_errors=True
+        )
+        self.stream.fetchone()
+        self.stream.fetchone()
+        event = self.stream.fetchone()
+        data = event.rows[0]["values"]["data"]
+        self.assertEqual(data, problematic_unicode_string)
+
     def test_drop_column(self):
         self.stream.close()
         self.execute("CREATE TABLE test_drop_column (id INTEGER(11), data VARCHAR(50))")
